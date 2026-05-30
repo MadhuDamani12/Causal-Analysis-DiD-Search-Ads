@@ -59,7 +59,7 @@ Continue the Google branded search campaign. Bob's methodology should not be use
 | File | Description |
 |------|-------------|
 | `Causal_DiD_Bazaar_Analysis.Rmd` | Full R Markdown analysis: data prep, DiD regressions, parallel trends plot, ROI calculation |
-| `Causal_DiD_Bazaar_Report.pdf` | Written report with methods, findings, visualizations, and recommendations |
+| `Causal_DiD_Analysis_Ads.pdf` | Written report with methods, findings, visualizations, and recommendations |
 
 ---
 
