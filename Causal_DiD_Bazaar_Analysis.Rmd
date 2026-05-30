@@ -1,0 +1,300 @@
+---
+title: "Measuring ROI on Sponsored Search Ads at Bazaar.com"
+author: "Madhu Damani "
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  pdf_document:
+    toc: false
+    number_sections: true
+    fig_width: 6
+    fig_height: 3.2
+geometry: margin=1in
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+# Global chunk options: show code, suppress messages/warnings, keep figures compact
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center"
+)
+```
+
+# Executive Summary {-}
+
+**Background** - Bazaar.com is a leading U.S. online retailer that runs sponsored search advertising on multiple search engines, including Google, Bing, Yahoo, and Ask. A meaningful portion of this spend supports branded keyword campaigns — search terms that include the Bazaar brand name (e.g., "Bazaar shoes"). The marketing team currently reports a 320% ROI on Google branded sponsored ads, calculated by attributing all sponsored-click revenue to the ads themselves. 
+
+**Business question** - Are these branded sponsored ads truly generating incremental revenue, or are they paying for clicks from customers who would have visited Bazaar.com anyway through the free organic search link? In other words, is the reported 320% ROI a real measure of value, or is it inflated by clicks the company would have received for free?
+
+**Natural experiment and method** - A technical glitch turned off Google sponsored ads in weeks 10–12 of a 12-week observation window, while sponsored ads on Bing, Yahoo, and Ask continued running normally. This unintended interruption gave us a way to measure what actually happens when the ads disappear: we compare Google's traffic change with the change observed on the other three platforms over the same period, which lets us separate the effect of the ads from broader market trends affecting all search engines.
+
+**Key findings.** A simple before-vs-after comparison on Google alone suggest the ads barely mattered (a small, statistically insignificant decline of 1,846 clicks/week). This estimate is misleading because it ignores the fact that the broader search market grew substantially during weeks 10–12 — visible in the other platforms' traffic. Once we account for that market-wide growth, turning off Google ads reduced total weekly traffic by approximately **9,911 clicks/week** beyond the trend on the other platforms (significant at p < 0.01). The traffic loss is consistent with cannibalization: Google lost ~12,204 sponsored clicks/week but recovered ~2,293 organic clicks/week, meaning roughly **19% of sponsored clicks would have arrived organically anyway**. Applying the corrected incremental traffic to Bazaar's per-click economics yields a corrected campaign-level ROI of approximately **580%** — Bob's 320% figure is wrong, but the corrected estimate is still positive.
+
+**Recommendation.** Continue running the Google branded sponsored search campaign. Bob's 320% calculation should not be used going forward. Validate the corrected estimate with a controlled geographic experiment before scaling spend, and recognize that this conclusion applies only to branded keywords. 
+
+```{r data-prep, include=FALSE}
+# Load packages used throughout the report
+library(dplyr)      # data manipulation
+library(ggplot2)    # plotting
+library(plm)        # panel data / fixed effects regression
+
+# Load data and engineer the variables used throughout the analysis
+data <- read.csv("ads_data.csv") %>%
+  mutate(
+    total_traffic = avg_spons + avg_org,              # outcome: total weekly traffic
+    log_traffic   = log(total_traffic),               # log outcome (handles skewness)
+    treated       = ifelse(platform == "goog", 1, 0), # Google = treated unit
+    post          = ifelse(week >= 10, 1, 0),         # weeks 10-12 = post-period
+    treat_post    = treated * post                    # interaction = DiD term
+  )
+```
+
+# What is wrong with Bob's ROI calculation?
+
+Bob's logic uses cost per sponsored click ($0.60), conversion probability (12%), and margin per
+conversion ($21) to compute a revenue per click of $2.52, giving an ROI of
+(2.52 - 0.60) / 0.60 = **320%**.
+
+The problem is that this assumes *every* sponsored click is a new visit caused by the ad. For
+branded keywords, this assumption is implausible: a user typing "Bazaar shoes" already knows
+about Bazaar. If the sponsored ad is absent, that user typically clicks the Bazaar organic listing
+displayed immediately below --- producing the same purchase with no ad spend. The
+sponsored ad therefore *cannibalizes* a click that organic search would have delivered for free.
+
+The descriptive evidence supports this. Comparing average weekly Google traffic before and
+during the glitch:
+
+| Period | Sponsored | Organic | Total |
+|---|---:|---:|---:|
+| Weeks 1--9 (Google) | 31,390 | 125,195 | 156,585 |
+| Weeks 10--12 (Google) | 0 | 148,477 | 148,477 |
+| **Difference** | **-31,390** | **+23,282** | **-8,108** |
+
+When Google ads stopped, organic clicks rose by ~23,282/week - those users substituted to
+the organic link rather than disappearing. Only ~8,108 clicks/week were genuinely lost from
+total traffic. The true value of a sponsored click is the revenue from clicks that *would not* have
+occurred without the ad. 
+
+**Disclaimer** - This table contains numbers from the case study file and not the csv shared on Canvas.
+
+# Treatment, Control, and the Natural Experiment
+
+**Unit of observation:** The unit of observation in this data set is a search engine platform in a given week - in other words, each row of the data represents one platform observed at one point in time. With 4 platforms and 12 weeks, we have 48 observations
+
+**Treatment:** the cessation of sponsored ads on Google starting in week 10. Because the
+shutdown was caused by a technical glitch (not a strategic choice), the treatment is plausibly
+exogenous --- the defining feature of a natural experiment.
+
+**Treated unit:** Google. **Control units:** Yahoo, Bing, Ask --- sponsored ads continued running
+on these platforms throughout all 12 weeks.
+
+**Pre-period:** weeks 1--9. **Post-period:** weeks 10--12.
+
+**Outcome variable:** `total_traffic = avg_spons + avg_org`. We use total traffic (not just
+sponsored or just organic) because the business question is whether ads bring incremental
+visitors to Bazaar.com. If lost sponsored clicks are fully replaced by organic, total is unchanged
+and the ads added no value; if total falls, the ads were generating incremental visits.
+
+
+# First-Difference (pre-post) Estimate
+We first estimate the simple pre-post change using only Google data, regressing total traffic
+on a post indicator.
+
+```{r q3-firstdiff}
+# Restrict to Google only; the coefficient on `post` is the pre-post difference
+google_only    <- data %>% filter(platform == "goog")
+prepost_levels <- lm(total_traffic ~ post, data = google_only)
+summary(prepost_levels)
+```
+
+**Interpretation.**
+
+- **Intercept = 8,390:** Google's average weekly traffic in the pre-period (weeks 1--9), when ads
+  were running.
+- **`post` coefficient = -1,846:** Google's average traffic dropped by ~1,846 clicks/week in the
+  post-period, giving an average of 8,390 - 1,846 = 6,544 clicks/week in weeks 10--12.
+- **Standard error = 3,195, p = 0.576:** the estimate is *not* statistically significant. 
+
+**Why we cannot rely on this estimate.** Taken at face value, the pre-post estimator says ads
+caused only a small, insignificant drop --- which would imply ads are doing little. This is
+misleading. The pre-post estimator confounds the treatment effect with anything else that
+changed between weeks 1--9 and weeks 10--12 (seasonality, market growth, holidays, search
+demand surges). The control platforms reveal that the broader search market was growing
+strongly during weeks 10--12, meaning Google should have been growing too. A flat-to-slightly-
+declining Google trajectory actually represents a substantial loss relative to its proper
+counterfactual. The DiD estimator, which we turn to next, captures this missed growth.
+
+# Difference-in-differences Estimate
+## Skewness check
+Total traffic is right-skewed and grows multiplicatively across weeks. We log-transform it for
+the DiD specification --- this both reduces skewness and makes the parallel-trends assumption
+more defensible on the proportional scale.
+
+```{r skewness-hist, fig.width=6, fig.height=2.6}
+par(mfrow = c(1, 2), mar = c(4, 4, 2.5, 1))
+hist(data$total_traffic, breaks = 12, col = "steelblue", border = "white",
+     main = "Total traffic", xlab = "Total traffic")
+```
+We estimate the DiD using the log of total traffic due to the skewness.
+
+### Assumptions required for causal inference
+
+Two assumptions must hold for the DiD estimate to be interpreted causally:
+
+1. **Parallel trends.** In the absence of the glitch, Google's traffic would have continued moving in parallel with Bing, Yahoo, and Ask. We cannot test this directly for the post-period (it is counterfactual), but we can assess it visually in the pre-period — the four platforms move together in weeks 1–9 (see plot below), supporting the assumption.
+
+2. **No interference (SUTVA).** The treatment of one platform must not affect outcomes on the other platforms. In our setting, the glitch on Google shouldn't change behavior on Bing, Yahoo, or Ask. This is plausible because each platform's users searched independently — but if some Google users switched to Bing because Bazaar's ad was missing, the controls would be contaminated and the DiD would be biased.
+
+## Parallel Trends Assumption 
+````{r parallel-trends, fig.width=7, fig.height=3.8}
+ggplot(data, aes(x = week, y = log_traffic, color = platform)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.5) +
+  geom_vline(xintercept = 9.5, linetype = "dashed", color = "gray40") +
+  scale_x_continuous(breaks = 1:12) +
+  scale_color_manual(
+    name   = NULL,
+    values = c("ask"   = "#E74C3C",
+               "bing"  = "#27AE60",
+               "goog"  = "#16A085",
+               "yahoo" = "#9B59B6"),
+    labels = c("ask"   = "Ask",
+               "bing"  = "Bing",
+               "goog"  = "Google (treated)",
+               "yahoo" = "Yahoo")
+  ) +
+  labs(title    = "Parallel Trends Assumption",
+       subtitle = "Dashed line: glitch begins (Google ads off in weeks 10-12)",
+       x = "Week", y = "log(total traffic)") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom",
+        plot.title = element_text(face = "bold"))
+````
+
+In weeks 1--9 all four platforms trend upward together, supporting parallel
+trends. After week 9, Google diverges sharply downward while the controls continue rising ---
+exactly the pattern a real treatment effect would produce.
+
+## DiD on Log Traffic Scale 
+
+```{r q4-did-log}
+# DiD on log scale
+FE_did <- plm(log_traffic ~ post + treat_post,
+              data   = data,
+              index  = "platform",
+              effect = "individual",
+              model  = "within")
+summary(FE_did)
+```
+
+**Interpretation.**
+- **`post` = 1.118 (p < 0.001):** the time trend across the control platforms. In level terms,
+  `exp(1.118) - 1` is approximately +206% --- the controls roughly tripled their traffic from
+  the pre- to post-period. A large market-wide surge was occurring.
+- **`treat_post` = -1.116 (p = 0.043):** the DiD estimate. In level terms, `exp(-1.116) - 1` is
+  approximately **-67%**: turning off Google ads caused total traffic to be about 67% lower
+  than it would have been if ads had continued, holding the control trend fixed.
+
+**Comparison with the first-difference estimate.** The pre-post estimate (-1,846 clicks/week,
+not significant) suggested ads barely mattered. The DiD reveals the opposite: ads were
+generating substantial incremental traffic, but the simple pre-post estimate was masked by a
+large background market trend. This is exactly why a control group is essential --- without it, we
+mistakenly attributed the absence of expected growth to "no effect" when it was actually a large
+missed opportunity.
+
+## DiD for ROI calculation
+The log-scale DiD gives a percentage interpretation. For the dollar-based ROI calculation in
+Q5, we re-run the DiD on raw levels so that the coefficient is interpretable as clicks/week.
+
+```{r q4-did-levels}
+# DiD on level scale; treat_post coefficient = lost clicks per week from turning ads off
+did_levels <- lm(total_traffic ~ treated + post + treat_post, data = data)
+summary(did_levels)
+```
+
+**Interpretation of the DiD coefficients:**
+
+| Coefficient | Estimate | Meaning |
+|---|---:|---|
+| Intercept | 5,265 | Average control traffic in pre-period (weeks 1--9) |
+| `treated` | +3,125 | Baseline gap: Google's pre-period traffic exceeds the controls' |
+| `post` | +8,065 | Time trend: controls grew by ~8,065 clicks/week from pre to post |
+| `treat_post` | **-9,911** | DiD: extra change for Google beyond the control trend |
+
+If Google had ridden the same wave as the controls, it should have grown by +8,065 clicks/week
+(from 8,390 to 16,455). Instead it shrank by 1,846 (down to 6,544). The 9,911-click gap is the
+true incremental traffic the ads were generating each week, statistically significant at p < 0.01.
+
+# Corrected ROI calculation
+## Decomposing the Effect: sponsored vs. organic substitution
+
+```{r q5-decomposition}
+# Decompose the total effect into sponsored loss and organic substitution
+did_spons <- lm(avg_spons ~ treated + post + treat_post, data = data)
+did_org   <- lm(avg_org   ~ treated + post + treat_post, data = data)
+summary(did_spons)$coefficients["treat_post", ]
+summary(did_org)$coefficients["treat_post", ]
+```
+| Outcome | `treat_post` coefficient | Interpretation |
+|---|---:|---|
+| Sponsored clicks | -12,204 | Sponsored clicks lost when ads turned off |
+| Organic clicks | +2,293 | Organic clicks gained (cannibalization recovery) |
+| Total traffic | **-9,911** | Net loss = -12,204 + 2,293 |
+
+## Computing the Corrected ROI
+
+```{r q5-roi}
+# Average sponsored clicks per week for Google during the pre-glitch period
+# This is what Bazaar was actually paying for in a "normal" ads-on week
+avg_spons_goog_pre <- data %>%
+  filter(platform == "goog", week <= 9) %>%
+  summarise(mean(avg_spons)) %>%
+  pull()
+avg_spons_goog_pre
+
+# Inputs to the corrected ROI calculation
+incremental_clicks <- 9911                              # from level-scale DiD
+cost_per_click     <- 0.60
+conv_rate          <- 0.12
+margin_per_conv    <- 21
+
+cost_per_week    <- avg_spons_goog_pre * cost_per_click
+revenue_per_week <- incremental_clicks * conv_rate * margin_per_conv
+roi_corrected    <- (revenue_per_week - cost_per_week) / cost_per_week
+
+cost_per_week
+revenue_per_week
+roi_corrected
+```
+
+**The reasoning.**
+
+- **Incremental clicks per week = 9,911.** This is the absolute value of the DiD coefficient on
+  total traffic -- the truly net-new visits the ads were generating. (Equivalently: the visits
+  Bazaar would lose if it stopped buying ads.)
+- **Cost per week is approximately \$3,674.** Bazaar pays $0.60 for *every* sponsored click, including the cannibalized ones. We use the pre-glitch average of ~6,123 sponsored clicks/week to
+  represent a typical ads-on week.
+- **Revenue per week is approximately \$24,976.** Apply Bazaar's conversion rate (12%) and margin ($21) to the 9,911 incremental visits.
+- **Corrected ROI = (\$24,976 - \$3,674) / \$3,674, which is approximately 580%.**
+
+
+## Caveats and Recommendation
+### Caveats
+
+- The post-period contains only 3 weeks, giving wide confidence intervals on all estimates. The DiD coefficient is statistically significant (p < 0.01) but the magnitude carries meaningful uncertainty.
+- The control surge in weeks 10–12 is large. If Google was systematically less able to capture that surge for platform-specific reasons unrelated to ads, the parallel-trends assumption could be overstating the effect.
+- Results apply only to **branded keywords**. Non-branded keywords ("shoes" rather than "Bazaar shoes") have no organic Bazaar listing to substitute for the ad, so cannibalization is much weaker and incremental ROI is likely higher there.
+
+### Recommendation
+
+1. **Recalculate the ROI** Bob's methodology is biased because it counts cannibalized clicks as incremental. The corrected ROI is approximately 580%. 
+
+2. **Continue the branded sponsored search campaign on Google.** Even under the conservative ROI framing, the incremental return justifies the spend.
+
+3. **Validate before scaling.** Run a controlled geographic A/B test (turn off ads in select branded campaigns in matched cities for 4–6 weeks) to confirm the magnitude. The natural experiment was useful but not designed — purpose-built experiments will give tighter estimates.
+
+4. **Do NOT generalize to non-branded campaigns.** The cannibalization mechanism is specific to branded searches, where an organic Bazaar listing exists. 
+
+5. **Consider re-evaluating bid strategy on branded keywords.** Since ~19% of paid clicks are cannibalized from organic, lowering bids on the most competitive branded terms (where Bazaar's organic listing already ranks #1) could reduce wasted spend without losing meaningful traffic.
